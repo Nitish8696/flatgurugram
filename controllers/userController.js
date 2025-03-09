@@ -199,7 +199,7 @@ exports.payBill = async (req, res) => {
         payment_page_client_id: "your_client_id",
         action: "paymentPage",
         currency: "INR",
-        return_url: `http://localhost:5173/user/payment/${transactionId}`,
+        return_url: `https://pay2rrca.com/user/payment/${transactionId}`,
         description: "Complete your payment",
         first_name: "John",
         last_name: "wick",
