@@ -6,13 +6,24 @@ const Bill = require("../models/Bill");
 const Payment = require("../models/Payment");
 const fs = require("fs");
 const path = require("path");
+const FlatUser = require("../models/FlatUser");
+const axios = require("axios");
+
+const API_KEY = "78E1A43D5B2456FA8CF5369DBFB9EF";
+const MERCHANT_ID = "SG2119";
+const API_URL = "https://smartgatewayuat.hdfcbank.com/session";
 
 exports.registerUser = async (req, res) => {
   try {
     const { name, flatNumber, email, phone, password, complex } = req.body;
 
     // Validate complex input
-    const validComplexes = ["RICHMOND PARK", "REGENCY PARK-1", "REGENT HOUSE", "EWS/SP UNITS"];
+    const validComplexes = [
+      "RICHMOND PARK",
+      "REGENCY PARK-1",
+      "REGENT HOUSE",
+      "EWS/SP UNITS",
+    ];
     if (!validComplexes.includes(complex)) {
       return res.status(400).json({
         success: false,
@@ -160,52 +171,229 @@ exports.payBill = async (req, res) => {
         .json({ message: "Payment amount must be at least Rs 10." });
     }
 
-    const newPayment = new Payment({
-      userId: bill.userId,
-      billId: bill.billType,
-      flatNumber: bill.flatNumber,
-      amountPaid: amount,
-      transactionId,
-      status: "successful", // Assuming success for this case
-    });
+    // return res.status(200).json({
+    //   message: "Payment successful.",
+    //   updatedBill: {
+    //     billId: bill.billType,
+    //     flatNumber: bill.flatNumber,
+    //     totalAmount: bill.totalAmount,
+    //     remainingAmount: bill.remainingAmount,
+    //     status: bill.status,
+    //     paymentDetails: bill.paymentDetails,
+    //   },
+    // });
+    // const customerDetails = await FlatUser.findById(req.user.id);
 
-    await newPayment.save();
+    const base64ApiKey = "base_64_encoded_api_key=="; // Your base64 encoded API key
 
-    // Update payment details
-    bill.amountPaid += amount;
-    bill.remainingAmount -= amount;
+    try {
+      // Extracting details from request body
+      // const { amount, currency, orderId, customerDetails } = req.body;
 
-    // Update status
-    if (bill.remainingAmount === 0) {
-      bill.status = "paid";
-    } else {
-      bill.status = "partial";
+      const requestData = {
+        order_id: transactionId,
+        amount: amount,
+        customer_id: billId,
+        customer_email: "test@mail.com",
+        customer_phone: "8604613494",
+        payment_page_client_id: "your_client_id",
+        action: "paymentPage",
+        currency: "INR",
+        return_url: `http://localhost:5173/user/payment/${transactionId}`,
+        description: "Complete your payment",
+        first_name: "John",
+        last_name: "wick",
+      };
+
+      const config = {
+        method: "post",
+        url: "https://smartgatewayuat.hdfcbank.com/session",
+        headers: {
+          Authorization: `Basic ${base64ApiKey}`,
+          "Content-Type": "application/json",
+          "x-merchantid": "SG2119",
+          "x-customerid": "123",
+        },
+        auth: {
+          username: "78E1A43D5B2456FA8CF5369DBFB9EF",
+          password: "", // Keep empty if not required
+        },
+        data: requestData,
+      };
+
+      axios(config)
+        .then((response) => {
+          console.log("Response:", response.data);
+          console.log(response.data.sdk_payload.payload.amount);
+          if (Number(response.data.sdk_payload.payload.amount) !== amount) {
+            return res
+              .status(400)
+              .json({ msg: "something went wrong try again later" });
+          }
+          res.status(200).json({ paymentUrl: response.data.payment_links.web });
+        })
+        .catch((error) => {
+          console.log(error);
+          console.error(
+            "Error:",
+            error.response ? error.response.data : error.message
+          );
+        });
+
+      // Respond to frontend with Payment URL
+    } catch (error) {
+      console.error(
+        "Payment initiation failed:",
+        error.response?.data || error.message
+      );
+      res.status(500).json({ error: "Payment initiation failed" });
     }
-
-    // Add payment record
-    bill.paymentDetails.push({
-      paymentId: newPayment._id,
-      amountPaid: amount,
-      paymentDate: newPayment.paymentDate,
-    });
-
-    // Save updates to the database
-    await bill.save();
-
-    return res.status(200).json({
-      message: "Payment successful.",
-      updatedBill: {
-        billId: bill.billType,
-        flatNumber: bill.flatNumber,
-        totalAmount: bill.totalAmount,
-        remainingAmount: bill.remainingAmount,
-        status: bill.status,
-        paymentDetails: bill.paymentDetails,
-      },
-    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ message: err.message });
+  }
+};
+
+exports.checkStatus = async (req, res) => {
+  const { transactionId } = req.params;
+
+  try {
+    const payment = await Payment.findOne({ transactionId: transactionId });
+
+    if (payment && payment.status === "failed") {
+      return res.status(200).json({ msg: "Failed", newPayment: payment });
+    }
+
+    if (payment && payment.status === "successful") {
+      return res.status(200).json({ msg: "SUCCESS", newPayment: payment });
+    }
+
+    const response = await axios.get(
+      `https://smartgatewayuat.hdfcbank.com/orders/${transactionId}`,
+      {
+        headers: {
+          Authorization: `Basic base_64_encoded_api_key==`,
+          version: "2023-06-30",
+          "Content-Type": "application/x-www-form-urlencoded",
+          "x-merchantid": "merchant_id",
+          "x-customerid": "customer_id",
+        },
+        auth: {
+          username: "78E1A43D5B2456FA8CF5369DBFB9EF",
+          password: "",
+        },
+      }
+    );
+    if (response.data.status === "CHARGED") {
+      const bill = await Bill.findById(response.data.customer_id);
+
+      const newPayment = new Payment({
+        userId: bill.userId,
+        billId: bill.billType,
+        flatNumber: bill.flatNumber,
+        amountPaid: response.data.amount,
+        transactionId,
+        status: "successful", // Assuming success for this case
+      });
+
+      await newPayment.save();
+
+      // Update payment details
+      bill.amountPaid += response.data.amount;
+      bill.remainingAmount -= response.data.amount;
+
+      // Update status
+      if (bill.remainingAmount === 0) {
+        bill.status = "paid";
+      } else {
+        bill.status = "partial";
+      }
+      // Add payment record
+      bill.paymentDetails.push({
+        paymentId: newPayment._id,
+        amountPaid: response.data.amount,
+        paymentDate: newPayment.paymentDate,
+      });
+
+      // Save updates to the database
+      await bill.save();
+      return res
+        .status(200)
+        .json({ msg: "SUCCESSFUL", newPayment: newPayment });
+    }
+    if (response.data.status === "AUTHENTICATION_FAILED") {
+      const bill = await Bill.findById(response.data.customer_id);
+
+      const newPayment = new Payment({
+        userId: bill.userId,
+        billId: bill.billType,
+        flatNumber: bill.flatNumber,
+        amountPaid: response.data.amount,
+        transactionId,
+        status: "failed",
+      });
+
+      await newPayment.save();
+
+      bill.paymentDetails.push({
+        paymentId: newPayment._id,
+        amountPaid: response.data.amount,
+        paymentDate: newPayment.paymentDate,
+      });
+
+      // Save updates to the database
+      await bill.save();
+      return res.status(200).json({ msg: "Failed", newPayment: newPayment });
+    }
+    if (response.data.status === "AUTHORIZATION_FAILED") {
+      const bill = await Bill.findById(response.data.customer_id);
+
+      const newPayment = new Payment({
+        userId: bill.userId,
+        billId: bill.billType,
+        flatNumber: bill.flatNumber,
+        amountPaid: response.data.amount,
+        transactionId,
+        status: "Failed", // Assuming success for this case
+      });
+
+      await newPayment.save();
+
+      bill.paymentDetails.push({
+        paymentId: newPayment._id,
+        amountPaid: response.data.amount,
+        paymentDate: newPayment.paymentDate,
+      });
+
+      // Save updates to the database
+      await bill.save();
+      return res.status(200).json({ msg: "Failed", newPayment: newPayment });
+    } else {
+      const bill = await Bill.findById(response.data.customer_id);
+
+      const newPayment = new Payment({
+        userId: bill.userId,
+        billId: bill.billType,
+        flatNumber: bill.flatNumber,
+        amountPaid: response.data.amount,
+        transactionId,
+        status: "Failed", // Assuming success for this case
+      });
+
+      await newPayment.save();
+
+      bill.paymentDetails.push({
+        paymentId: newPayment._id,
+        amountPaid: response.data.amount,
+        paymentDate: newPayment.paymentDate,
+      });
+
+      // Save updates to the database
+      await bill.save();
+      res.status(200).json({ msg: "Failed", newPayment: newPayment });
+    }
+  } catch (error) {
+    console.log("Response" + error)
   }
 };
 
@@ -273,7 +461,12 @@ exports.uploadUsers = async (req, res) => {
         .json({ error: `Missing columns: ${missingColumns.join(", ")}` });
     }
 
-    const validComplexes = ["RICHMOND PARK", "REGENCY PARK-1", "REGENT HOUSE", "EWS/SP UNITS"];
+    const validComplexes = [
+      "RICHMOND PARK",
+      "REGENCY PARK-1",
+      "REGENT HOUSE",
+      "EWS/SP UNITS",
+    ];
 
     // Prepare users for bulk insertion
     const users = [];

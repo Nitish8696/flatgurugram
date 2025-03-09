@@ -17,6 +17,7 @@ router.post("/register", userController.registerUser);
 router.post("/login", userController.loginUser);
 router.get("/users", verifyToken, isAdmin, userController.getUsers);
 router.post("/pay-bill", verifyToken, userController.payBill);
+router.get("/pay-status/:transactionId",userController.checkStatus);
 router.post("/upload-users",verifyToken,isAdmin, upload.single("file"), userController.uploadUsers);
 
 // User Dashboard

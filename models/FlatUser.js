@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
 
 const flatUserSchema = new mongoose.Schema({
-  flatNumber: { type: String, required: true, unique: true },
+  flatNumber: { type: String, required: true },
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true },
   phone: { type: String, required: true },
